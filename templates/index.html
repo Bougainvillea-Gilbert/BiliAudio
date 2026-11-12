@@ -1,0 +1,621 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>BiliAudio - 视频音频提取</title>
+<link rel="icon" type="image/png" href="/icon.png?v=catgirl" />
+<style>
+  :root {
+    --bg: #101014;
+    --surface: #1a1a20;
+    --border: #2c2c34;
+    --text: #e6e6ea;
+    --muted: #8a8a94;
+    --accent: #00a1d6;
+    --pink: #fb7299;
+    --error: #f87171;
+    --success: #4ade80;
+    --warning: #fbbf24;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    min-height: 100vh;
+    font-family: "Microsoft YaHei UI", "Segoe UI", "Noto Sans SC", sans-serif;
+    background:
+      radial-gradient(900px 420px at 85% -10%, rgba(251,114,153,0.08), transparent 60%),
+      radial-gradient(900px 420px at 10% -10%, rgba(0,161,214,0.10), transparent 60%),
+      var(--bg);
+    color: var(--text);
+    display: flex; flex-direction: column;
+  }
+  header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0.7rem 1.25rem;
+    background: rgba(26,26,32,0.85);
+    backdrop-filter: blur(8px);
+    border-bottom: 1px solid var(--border);
+    font-weight: 600; font-size: 0.95rem;
+    position: sticky; top: 0; z-index: 10;
+  }
+  header .brand { display: flex; align-items: center; gap: 0.55rem; }
+  header .brand img { width: 30px; height: 30px; border-radius: 8px; }
+  header .dot { color: var(--pink); margin-right: 0.4rem; }
+  header .sub { font-size: 0.75rem; color: var(--muted); font-weight: 400; }
+
+  .wrap { width: 100%; max-width: 1020px; margin: 0 auto; padding: 1.25rem; flex: 1; }
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 1.25rem;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.22);
+  }
+  .card h2 { font-size: 0.95rem; font-weight: 600; margin-bottom: 1rem; }
+  .card h2 span { color: var(--pink); }
+
+  label { display: block; font-size: 0.8rem; color: var(--muted); margin-bottom: 0.35rem; }
+  input[type="text"] {
+    width: 100%; padding: 0.65rem 0.875rem;
+    font-size: 0.875rem; font-family: inherit;
+    color: var(--text); background: var(--bg);
+    border: 1px solid var(--border); border-radius: 8px;
+    transition: border-color 0.15s;
+  }
+  input::placeholder { color: var(--muted); }
+  input:focus { outline: none; border-color: var(--accent); }
+  select {
+    width: 100%; padding: 0.5rem 0.75rem; font-size: 0.875rem; font-family: inherit;
+    color: var(--text); background: var(--bg);
+    border: 1px solid var(--border); border-radius: 8px; cursor: pointer;
+  }
+
+  .url-row { display: flex; gap: 0.75rem; align-items: flex-end; flex-wrap: wrap; }
+  .url-row .grow { flex: 1; min-width: 240px; }
+  .url-row .proxy-box { width: 240px; }
+
+  .btn {
+    padding: 0.65rem 1.4rem;
+    font-size: 0.875rem; font-weight: 500; font-family: inherit;
+    color: #fff; border: none; border-radius: 8px; cursor: pointer;
+    background: linear-gradient(135deg, var(--accent) 0%, var(--pink) 100%);
+    transition: opacity 0.15s, transform 0.1s;
+    white-space: nowrap;
+  }
+  .btn:hover { opacity: 0.9; }
+  .btn:active { transform: scale(0.98); }
+  .btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+  .btn.block { width: 100%; padding: 0.75rem 1rem; font-size: 0.9375rem; }
+  .btn.ghost {
+    background: var(--bg); color: var(--muted);
+    border: 1px solid var(--border);
+  }
+  .btn.ghost:hover { color: var(--text); }
+  .btn.small { padding: 0.35rem 0.8rem; font-size: 0.78rem; }
+
+  .panes { display: flex; gap: 1.25rem; margin-top: 1.25rem; align-items: flex-start; }
+  .pane-left { flex: 1.25; min-width: 0; }
+  .pane-right { flex: 1; min-width: 0; }
+  @media (max-width: 760px) { .panes { flex-direction: column; } .panes > * { width: 100%; } }
+
+  /* 预览清单 */
+  .preview-summary { font-size: 0.85rem; color: var(--muted); line-height: 1.7; margin-bottom: 0.75rem; }
+  .preview-summary .t { color: var(--text); font-weight: 600; }
+  .list-toolbar { display: flex; gap: 0.5rem; align-items: center; margin-bottom: 0.75rem; }
+  .list-toolbar .spacer { flex: 1; }
+  .item-list { max-height: 460px; overflow-y: auto; display: flex; flex-direction: column; gap: 0.5rem; }
+  .item {
+    display: flex; gap: 0.7rem; align-items: center;
+    background: var(--bg); border: 1px solid var(--border); border-radius: 10px;
+    padding: 0.55rem 0.7rem; cursor: pointer; transition: border-color 0.15s;
+  }
+  .item:hover { border-color: var(--accent); }
+  .item.checked { border-color: var(--accent); }
+  .item input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--accent); flex-shrink: 0; cursor: pointer; }
+  .item .thumb {
+    width: 96px; height: 54px; flex-shrink: 0;
+    background: var(--surface); border-radius: 6px; overflow: hidden;
+    display: flex; align-items: center; justify-content: center;
+    color: var(--muted); font-size: 0.7rem;
+  }
+  .item .thumb img { width: 100%; height: 100%; object-fit: cover; }
+  .item .info { flex: 1; min-width: 0; }
+  .item .name {
+    font-size: 0.8125rem; line-height: 1.4;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  }
+  .item .sub { font-size: 0.72rem; color: var(--muted); margin-top: 0.25rem; }
+  .empty-tip { color: var(--muted); font-size: 0.85rem; text-align: center; padding: 2.5rem 1rem; }
+
+  /* 输出选项 */
+  .type-switch { display: flex; gap: 0.6rem; margin-bottom: 1rem; }
+  .type-switch .opt {
+    flex: 1; text-align: center; padding: 0.6rem 0;
+    border: 1px solid var(--border); border-radius: 8px;
+    background: var(--bg); color: var(--muted);
+    font-size: 0.875rem; cursor: pointer; transition: all 0.15s;
+  }
+  .type-switch .opt.active { border-color: var(--accent); color: var(--text); background: rgba(0,161,214,0.1); }
+  .field { margin-bottom: 1rem; }
+  .field.hidden { display: none; }
+  .btn-row { display: flex; flex-direction: column; gap: 0.6rem; }
+
+  .progress-wrap { margin-top: 1rem; display: none; }
+  .progress-bar { height: 8px; border-radius: 4px; background: var(--bg); border: 1px solid var(--border); overflow: hidden; }
+  .progress-fill { height: 100%; width: 0%; background: linear-gradient(90deg, var(--accent), var(--pink)); transition: width 0.3s ease; }
+  .progress-text { margin-top: 0.45rem; font-size: 0.8rem; color: var(--muted); display: flex; justify-content: space-between; }
+
+  .msg { margin-top: 1rem; padding: 0.7rem 0.875rem; font-size: 0.85rem; border-radius: 8px; display: none; word-break: break-all; }
+  .msg.error { display: block; color: var(--error); background: rgba(248,113,113,0.1); }
+  .msg.success { display: block; color: var(--success); background: rgba(74,222,128,0.1); }
+  .msg.warning { display: block; color: var(--warning); background: rgba(251,191,36,0.1); }
+
+  .hint { margin-top: 1rem; font-size: 0.75rem; color: var(--muted); line-height: 1.7; }
+  .hint code { background: var(--bg); padding: 0.1rem 0.35rem; border-radius: 4px; }
+
+  /* 能力边界告示 */
+  details.notice { margin-top: 1.25rem; }
+  details.notice summary {
+    cursor: pointer; font-size: 0.875rem; color: var(--muted);
+    padding: 0.9rem 1.25rem; list-style: none;
+  }
+  details.notice summary::before { content: "▸ "; color: var(--accent); }
+  details.notice[open] summary::before { content: "▾ "; }
+  details.notice summary:hover { color: var(--text); }
+  .notice-body { padding: 0 1.25rem 1.25rem; font-size: 0.8125rem; line-height: 1.9; color: var(--muted); }
+  .notice-body h3 { font-size: 0.85rem; color: var(--text); margin: 0.8rem 0 0.3rem; }
+  .notice-body ul { padding-left: 1.2rem; }
+  .notice-body .no { color: var(--error); }
+  .notice-body .yes { color: var(--success); }
+
+  footer { padding: 0.7rem; text-align: center; font-size: 0.72rem; color: var(--muted); border-top: 1px solid var(--border); }
+</style>
+</head>
+<body>
+  <header>
+    <div class="brand"><img src="/icon.png?v=catgirl" alt="BiliAudio" /><span>BiliAudio</span></div>
+    <div class="sub">视频音频提取 · 本地运行</div>
+  </header>
+
+  <div class="wrap">
+    <!-- 链接输入 -->
+    <div class="card">
+      <h2>视频<span>链接</span></h2>
+      <div class="url-row">
+        <div class="grow">
+          <label for="url">页面地址（B 站 / 抖音 / YouTube 等视频站，或内嵌视频的网页）</label>
+          <input type="text" id="url" placeholder="粘贴视频页面链接，如 bilibili.com/video/BVxxxxx" autocomplete="off" />
+        </div>
+        <button class="btn" id="parseBtn">解析链接</button>
+      </div>
+      <div style="margin-top:0.6rem;font-size:0.75rem;color:var(--muted)" id="proxyStatus"></div>
+      <div class="msg warning" id="ffmpegWarn" style="display:none">
+        未检测到 FFmpeg，请先安装：<code>winget install FFmpeg</code>
+      </div>
+    </div>
+
+    <div class="panes">
+      <!-- 左：预览 + 选择 -->
+      <div class="card pane-left">
+        <h2>内容<span>预览</span></h2>
+        <div class="preview-summary" id="summary">解析链接后，这里列出视频清单；多集页面可勾选下载或合集下载。</div>
+        <div class="list-toolbar" id="listToolbar" style="display:none">
+          <button class="btn ghost small" id="selAll">全选</button>
+          <button class="btn ghost small" id="selNone">清空</button>
+          <div class="spacer"></div>
+          <span style="font-size:0.78rem;color:var(--muted)" id="selCount"></span>
+        </div>
+        <div class="item-list" id="itemList"></div>
+        <div class="empty-tip" id="emptyTip">尚未解析</div>
+      </div>
+
+      <!-- 右：输出选项 -->
+      <div class="card pane-right">
+        <h2>输出<span>选项</span></h2>
+
+        <div class="type-switch">
+          <div class="opt active" id="typeAudio" data-type="audio">♪ 仅音频</div>
+          <div class="opt" id="typeVideo" data-type="video">▶ 视频 MP4</div>
+        </div>
+
+        <div class="field" id="audioField">
+          <label for="audioFormat">音频格式</label>
+          <select id="audioFormat">
+            <option value="mp3">MP3（通用）</option>
+            <option value="m4a">M4A（高保真）</option>
+            <option value="aac">AAC</option>
+          </select>
+        </div>
+
+        <div class="field hidden" id="videoField">
+          <label for="quality">清晰度</label>
+          <select id="quality"><option value="">最高画质</option></select>
+        </div>
+
+        <div class="btn-row">
+          <button class="btn block" id="startBtn" disabled>下载选中</button>
+          <button class="btn block ghost" id="allBtn" style="display:none">合集下载（全部）</button>
+        </div>
+
+        <div class="progress-wrap" id="progressWrap">
+          <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+          <div class="progress-text">
+            <span id="progressStatus">等待中…</span>
+            <span id="progressDetail"></span>
+          </div>
+        </div>
+
+        <div class="msg" id="msg"></div>
+
+        <div id="doneActions" style="display:none;margin-top:0.75rem;gap:0.5rem;flex-wrap:wrap">
+          <button class="btn ghost small" id="openResult">打开所在文件夹</button>
+          <button class="btn small" id="zipBtn" style="display:none">打包另存为 ZIP…</button>
+        </div>
+
+        <div class="field" style="margin-top:1.1rem;margin-bottom:0">
+          <label>下载位置</label>
+          <div style="display:flex;gap:0.5rem;align-items:center">
+            <div id="dlDir" style="flex:1;font-size:0.75rem;color:var(--muted);word-break:break-all">…</div>
+            <button class="btn ghost small" id="changeDir">更改</button>
+            <button class="btn ghost small" id="openDir">打开</button>
+          </div>
+        </div>
+
+        <div class="hint">
+          默认保存到系统「下载」文件夹，可更改为任意目录。<br>
+          批量任务逐集下载，单集失败不影响其它集。
+        </div>
+      </div>
+    </div>
+
+    <!-- 能力边界告示 -->
+    <details class="card notice">
+      <summary>能力说明：这个工具能做什么、不能做什么</summary>
+      <div class="notice-body">
+        <h3 class="yes">✓ 能做</h3>
+        <ul>
+          <li><b>主流视频站</b>：B 站（BV / av / b23.tv 短链）、抖音、YouTube、X、Vimeo、微博视频等 yt-dlp 支持的 1800+ 站点。</li>
+          <li><b>普通网页内嵌视频</b>：文章页、博客里的 mp4 视频（如 Seed 官网的演示视频）会自动识别。</li>
+          <li><b>多集内容</b>：分 P、播放列表、一页多视频，逐集预览，支持勾选下载或合集下载。</li>
+          <li><b>音频提取</b>：MP3 / M4A / AAC，保留中文标题；<b>视频下载</b>：按清晰度选择（以片源实际提供的档位为准）。</li>
+          <li><b>海外站</b>：自动使用系统代理，也可手动填写代理地址。</li>
+          <li>所有处理在本机完成，不上传任何数据到第三方服务器。</li>
+        </ul>
+        <h3 class="no">✗ 不能做 / 有限制</h3>
+        <ul>
+          <li><b>DRM 加密内容</b>：爱优腾 VIP 剧集、Netflix 等加密流媒体无法解析（破解 DRM 属于违法行为，本工具不做）。</li>
+          <li><b>需要登录 / 会员的内容</b>：如 B 站大会员画质、仅粉丝可见视频，需要 Cookie 支持（当前版本未提供），只能拿到公开部分。</li>
+          <li><b>纯 JS 动态加载的页面</b>：如果网页 HTML 里没有视频标签、完全靠脚本运行时加载，通用解析可能找不到视频。</li>
+          <li><b>海外站访问</b>：能否下载取决于你本机网络和代理，工具本身不提供翻墙能力。</li>
+          <li><b>直播</b>：面向点播视频设计，不保证支持直播流。</li>
+          <li>站点接口会变化，个别网站可能暂时失效，更新 yt-dlp 通常能恢复。</li>
+        </ul>
+        <h3>版权提醒</h3>
+        <ul>
+          <li>仅供个人学习与备份使用。下载他人作品请遵守原平台条款与著作权法，勿用于二次分发、商用等侵权行为。与 Bilibili 等任何平台官方均无关联。</li>
+        </ul>
+      </div>
+    </details>
+  </div>
+
+  <footer>本地运行 · 仅供个人学习备份使用</footer>
+
+<script>
+(function () {
+  var urlInput = document.getElementById("url");
+  var proxyStatus = document.getElementById("proxyStatus");
+  var parseBtn = document.getElementById("parseBtn");
+  var startBtn = document.getElementById("startBtn");
+  var allBtn = document.getElementById("allBtn");
+  var msgEl = document.getElementById("msg");
+  var ffmpegWarn = document.getElementById("ffmpegWarn");
+  var summaryEl = document.getElementById("summary");
+  var listToolbar = document.getElementById("listToolbar");
+  var itemList = document.getElementById("itemList");
+  var emptyTip = document.getElementById("emptyTip");
+  var selCount = document.getElementById("selCount");
+  var qualitySel = document.getElementById("quality");
+  var audioField = document.getElementById("audioField");
+  var videoField = document.getElementById("videoField");
+  var progressWrap = document.getElementById("progressWrap");
+  var progressFill = document.getElementById("progressFill");
+  var progressStatus = document.getElementById("progressStatus");
+  var progressDetail = document.getElementById("progressDetail");
+
+  var mediaType = "audio";
+  var items = [];        // 解析出的每集 {index,title,thumbnail,duration,url}
+  var pollTimer = null;
+  var lastTaskId = null;
+  var lastFilename = null;
+  var lastDir = null;
+
+  function showMsg(text, type) { msgEl.className = "msg " + (type || ""); msgEl.textContent = text; }
+  function esc(s) {
+    return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+  function fmtDuration(sec) {
+    if (sec == null) return "";
+    sec = Math.round(sec);
+    var h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
+    var mm = (m < 10 ? "0" : "") + m, ss = (s < 10 ? "0" : "") + s;
+    return h > 0 ? h + ":" + mm + ":" + ss : m + ":" + ss;
+  }
+  function selectedUrls() {
+    return items.filter(function (it) { return it.checked; }).map(function (it) { return it.url; });
+  }
+  function refreshSelection() {
+    var n = selectedUrls().length;
+    selCount.textContent = items.length ? ("已选 " + n + " / " + items.length + " 集") : "";
+    startBtn.textContent = n > 0 ? ("下载选中（" + n + " 集）") : "下载选中";
+    startBtn.disabled = n === 0;
+    allBtn.style.display = items.length > 1 ? "block" : "none";
+    if (items.length > 1) allBtn.textContent = "合集下载（全部 " + items.length + " 集）";
+  }
+
+  // 环境检查 + 下载位置
+  fetch("/api/check-env").then(function (r) { return r.json(); }).then(function (d) {
+    ffmpegWarn.style.display = d && d.ffmpeg ? "none" : "block";
+    if (d && d.proxy_detected && d.proxy) {
+      proxyStatus.textContent = "已自动启用系统代理：" + d.proxy + "（海外站走代理，国内站不受影响）";
+    }
+  }).catch(function () {});
+
+  function refreshDir() {
+    fetch("/api/config").then(function (r) { return r.json(); }).then(function (d) {
+      if (d && d.download_dir) document.getElementById("dlDir").textContent = d.download_dir;
+    }).catch(function () {});
+  }
+  refreshDir();
+
+  document.getElementById("changeDir").addEventListener("click", function () {
+    fetch("/api/choose-dir", { method: "POST" }).then(function (r) { return r.json(); }).then(function (d) {
+      if (d && d.download_dir) {
+        document.getElementById("dlDir").textContent = d.download_dir;
+        if (!d.canceled) {
+          if (d.writable === false) {
+            showMsg("该目录当前无写入权限，下载时会自动改存到程序旁的 downloads 文件夹", "warning");
+          } else {
+            showMsg("下载位置已更改：" + d.download_dir, "success");
+          }
+        }
+      }
+    }).catch(function () {});
+  });
+  document.getElementById("openDir").addEventListener("click", function () {
+    fetch("/api/open-folder", { method: "POST" }).catch(function () {});
+  });
+  document.getElementById("openResult").addEventListener("click", function () {
+    var fd = new FormData();
+    if (lastFilename) fd.append("filename", lastFilename);
+    if (lastDir) fd.append("dir", lastDir);
+    fetch("/api/open-folder", { method: "POST", body: fd }).catch(function () {});
+  });
+  document.getElementById("zipBtn").addEventListener("click", function () {
+    if (!lastTaskId) return;
+    showMsg("正在等待选择保存位置…", "");
+    var fd = new FormData();
+    fd.append("task_id", lastTaskId);
+    fetch("/api/save-zip", { method: "POST", body: fd })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (d && d.saved) showMsg("ZIP 已保存：" + d.saved, "success");
+        else if (d && d.error) showMsg("打包失败：" + d.error, "error");
+        else showMsg("", "");
+      })
+      .catch(function () { showMsg("打包请求失败", "error"); });
+  });
+
+  // 类型切换
+  document.querySelectorAll(".type-switch .opt").forEach(function (el) {
+    el.addEventListener("click", function () {
+      document.querySelectorAll(".type-switch .opt").forEach(function (o) { o.classList.remove("active"); });
+      el.classList.add("active");
+      mediaType = el.dataset.type;
+      audioField.classList.toggle("hidden", mediaType !== "audio");
+      videoField.classList.toggle("hidden", mediaType !== "video");
+    });
+  });
+
+  // 渲染清单
+  function renderItems() {
+    itemList.innerHTML = "";
+    emptyTip.style.display = items.length ? "none" : "block";
+    listToolbar.style.display = items.length ? "flex" : "none";
+    items.forEach(function (it, idx) {
+      var div = document.createElement("div");
+      div.className = "item" + (it.checked ? " checked" : "");
+      var thumbHtml = it.thumbnail
+        ? '<img src="' + esc(it.thumbnail) + '" referrerpolicy="no-referrer" alt="" />'
+        : "无封面";
+      div.innerHTML =
+        '<input type="checkbox" ' + (it.checked ? "checked" : "") + " />" +
+        '<div class="thumb">' + thumbHtml + "</div>" +
+        '<div class="info"><div class="name">' + esc(it.title) + "</div>" +
+        '<div class="sub">第 ' + it.index + " 集" + (it.duration ? " · " + fmtDuration(it.duration) : "") + "</div></div>";
+      div.addEventListener("click", function (e) {
+        if (e.target.tagName !== "INPUT") {
+          it.checked = !it.checked;
+        } else {
+          it.checked = e.target.checked;
+        }
+        div.classList.toggle("checked", it.checked);
+        div.querySelector("input").checked = it.checked;
+        refreshSelection();
+      });
+      itemList.appendChild(div);
+    });
+    refreshSelection();
+  }
+
+  document.getElementById("selAll").addEventListener("click", function () {
+    items.forEach(function (it) { it.checked = true; }); renderItems();
+  });
+  document.getElementById("selNone").addEventListener("click", function () {
+    items.forEach(function (it) { it.checked = false; }); renderItems();
+  });
+
+  // 解析链接
+  function doParse() {
+    var url = urlInput.value.trim();
+    if (!url) { showMsg("请先粘贴视频链接", "error"); return; }
+    items = [];
+    renderItems();
+    startBtn.disabled = true;
+    showMsg("", "");
+    parseBtn.disabled = true;
+    parseBtn.textContent = "解析中…";
+    summaryEl.textContent = "正在解析，请稍候…";
+
+    var fd = new FormData();
+    fd.append("url", url);
+    fd.append("proxy", "");
+
+    fetch("/api/info", { method: "POST", body: fd })
+      .then(function (res) {
+        return res.json().then(function (data) {
+          if (!res.ok) throw new Error(data.error || "解析失败");
+          return data;
+        });
+      })
+      .then(function (info) {
+        var s = '<span class="t">' + esc(info.title || "(无标题)") + "</span><br>";
+        if (info.uploader) s += "UP主/作者：" + esc(info.uploader) + " · ";
+        s += "共 " + info.count + " 集";
+        summaryEl.innerHTML = s;
+
+        items = (info.items || []).map(function (it) { it.checked = true; return it; });
+        renderItems();
+
+        qualitySel.innerHTML = '<option value="">最高画质</option>';
+        (info.heights || []).forEach(function (h) {
+          var o = document.createElement("option");
+          o.value = h; o.textContent = h + "P";
+          qualitySel.appendChild(o);
+        });
+        if (!(info.heights || []).length) {
+          var o = document.createElement("option");
+          o.value = ""; o.textContent = "（未提供清晰度列表，按源文件下载）";
+          qualitySel.appendChild(o);
+        }
+        showMsg("解析成功：勾选要下载的集，或直接合集下载", "success");
+      })
+      .catch(function (err) {
+        summaryEl.textContent = "解析失败";
+        showMsg("解析失败: " + err.message, "error");
+      })
+      .finally(function () {
+        parseBtn.disabled = false;
+        parseBtn.textContent = "解析链接";
+      });
+  }
+  parseBtn.addEventListener("click", doParse);
+  urlInput.addEventListener("keydown", function (e) { if (e.key === "Enter") { e.preventDefault(); doParse(); } });
+
+  // 下载
+  function setProgress(pct) { progressFill.style.width = (pct == null ? 0 : pct) + "%"; }
+  function stopPolling() { if (pollTimer) { clearInterval(pollTimer); pollTimer = null; } }
+  function setBusy(b) {
+    startBtn.disabled = b || selectedUrls().length === 0;
+    allBtn.disabled = b;
+    if (b) { startBtn.textContent = "处理中…"; } else { refreshSelection(); }
+  }
+
+  function pollTask(taskId) {
+    stopPolling();
+    pollTimer = setInterval(function () {
+      fetch("/api/task/" + taskId).then(function (r) { return r.json(); }).then(function (t) {
+        var itemTag = t.item ? ("（第 " + t.item + " 集）") : "";
+        switch (t.status) {
+          case "queued":
+          case "starting":
+            progressStatus.textContent = "准备中…" + itemTag; break;
+          case "downloading":
+            progressStatus.textContent = "下载中" + itemTag;
+            if (t.percent != null) setProgress(t.percent);
+            progressDetail.textContent =
+              (t.percent != null ? t.percent + "%  " : "") +
+              (t.speed || "") + (t.eta ? "  剩余 " + t.eta : "");
+            break;
+          case "converting":
+            progressStatus.textContent = "转码/合并中…" + itemTag;
+            setProgress(100); progressDetail.textContent = ""; break;
+          case "done":
+            stopPolling();
+            setProgress(100);
+            progressStatus.textContent = "完成";
+            progressDetail.textContent = "";
+            setBusy(false);
+            lastTaskId = taskId;
+            lastFilename = t.filename || null;
+            lastDir = t.dir || null;
+            document.getElementById("doneActions").style.display = "flex";
+            document.getElementById("zipBtn").style.display = (t.count > 1 ? "inline-block" : "none");
+            var msg = "共 " + t.count + " 个文件已保存到 " + (t.dir || "下载目录");
+            if (t.failures && t.failures.length) {
+              msg += "；" + t.failures.length + " 集失败：" + t.failures.join("；");
+              showMsg(msg, "warning");
+            } else if (t.note) {
+              showMsg(t.note + "。" + msg, "warning");
+            } else {
+              showMsg(msg + "。第一个: " + t.filename, "success");
+            }
+            break;
+          case "error":
+            stopPolling();
+            setBusy(false);
+            progressStatus.textContent = "失败";
+            showMsg("提取失败: " + (t.error || "未知错误"), "error");
+            break;
+        }
+      }).catch(function () {});
+    }, 500);
+  }
+
+  function startDownload(urls) {
+    if (!urls.length) { showMsg("请先勾选要下载的集", "error"); return; }
+    showMsg("", "");
+    document.getElementById("doneActions").style.display = "none";
+    setBusy(true);
+    setProgress(0);
+    progressDetail.textContent = "";
+    progressStatus.textContent = "提交中…";
+    progressWrap.style.display = "block";
+
+    var fd = new FormData();
+    fd.append("url", urlInput.value.trim());
+    fd.append("urls", JSON.stringify(urls));
+    fd.append("proxy", "");
+    fd.append("media_type", mediaType);
+    if (mediaType === "video") {
+      fd.append("format", "video");
+      if (qualitySel.value) fd.append("max_height", qualitySel.value);
+    } else {
+      fd.append("format", document.getElementById("audioFormat").value);
+    }
+
+    fetch("/api/extract", { method: "POST", body: fd })
+      .then(function (res) {
+        return res.json().then(function (data) {
+          if (!res.ok) throw new Error(data.error || "请求失败");
+          return data;
+        });
+      })
+      .then(function (data) { pollTask(data.task_id); })
+      .catch(function (err) {
+        setBusy(false);
+        showMsg(err.message || "提取失败", "error");
+        progressWrap.style.display = "none";
+      });
+  }
+
+  startBtn.addEventListener("click", function () { startDownload(selectedUrls()); });
+  allBtn.addEventListener("click", function () {
+    startDownload(items.map(function (it) { return it.url; }));
+  });
+})();
+</script>
+</body>
+</html>

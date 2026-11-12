@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# 虚拟环境
+.venv/
+venv/
+
+# 打包产物
+build/
+dist/
+*.spec
+
+# 下载输出
+downloads/
+
+# 系统/编辑器
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# 本机应用入口（可重新构建）
+BiliAudio.app/
+
+# 本地凭据与配置
+.env
+.env.*
+!.env.example
+cookies.txt
+cookies*.txt
+config.json
+*.log
