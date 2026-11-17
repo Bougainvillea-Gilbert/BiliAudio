@@ -9,7 +9,9 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 import urllib.request
+from urllib.parse import urlsplit
 
 import yt_dlp
 
@@ -58,14 +60,62 @@ def is_supported_url(url: str) -> bool:
     return bool(_HTTP_PATTERN.match(url))
 
 
-def resolve_url(url: str) -> str:
+def _network_options(url: str, proxy=None):
+    """B 站默认直连；手动代理和专用环境变量优先，其它站保留自动代理。"""
+    if proxy is None:
+        explicit = os.environ.get("BILI_AUDIO_PROXY", "").strip()
+        host = (urlsplit(url).hostname or "").lower()
+        is_bili = host in ("bilibili.com", "b23.tv") or host.endswith(".bilibili.com")
+        proxy = explicit or ("" if is_bili else detect_proxy())
+    return {
+        # 空字符串显式禁用 yt-dlp 自动读取的系统/环境代理。
+        "proxy": proxy,
+        "socket_timeout": 30,
+        "retries": 3,
+        "fragment_retries": 3,
+        "extractor_retries": 3,
+    }
+
+
+def _is_network_error(error):
+    message = str(error).lower()
+    return any(token in message for token in (
+        "timed out", "timeout", "connection reset", "connection aborted",
+        "connection refused", "remote end closed connection",
+        "temporary failure in name resolution", "unable to resolve",
+        "name or service not known", "nodename nor servname provided",
+    ))
+
+
+def _extract_with_retries(url, opts, download):
+    # extractor_retries 并不覆盖所有解析器的网页请求失败，需要外层重试。
+    for attempt in range(3):
+        try:
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                return ydl.extract_info(url, download=download)
+        except yt_dlp.utils.DownloadError as error:
+            if not _is_network_error(error):
+                raise
+            if attempt == 2:
+                raise yt_dlp.utils.DownloadError(
+                    "网络连接超时或中断，重试 2 次后仍失败。请稍后重试，"
+                    "并检查网络或代理设置。原始错误：" + str(error)
+                ) from error
+            time.sleep(attempt + 1)
+
+
+def resolve_url(url: str, proxy=None) -> str:
     """把短链（b23.tv / v.douyin.com 等）解析成真实地址；解析不动就原样返回交给 yt-dlp。"""
     url = (url or "").strip()
     if not _SHORTLINK_PATTERN.search(url):
         return url
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(req, timeout=8) as resp:
+        network = _network_options(url, proxy)
+        proxies = ({"http": network["proxy"], "https": network["proxy"]}
+                   if network["proxy"] else (None if network["proxy"] is None else {}))
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler(proxies))
+        with opener.open(req, timeout=network["socket_timeout"]) as resp:
             return resp.geturl()
     except Exception:
         return url
@@ -162,19 +212,14 @@ def fetch_info(url: str, proxy=None):
     """
     if not is_supported_url(url):
         raise ValueError("不支持或无效的链接")
-    url = resolve_url(url)
+    url = resolve_url(url, proxy=proxy)
     opts = {
         "quiet": True,
         "no_warnings": True,
         "skip_download": True,
     }
-    if proxy is None:
-        proxy = detect_proxy()
-    if proxy:
-        opts["proxy"] = proxy
-
-    with yt_dlp.YoutubeDL(opts) as ydl:
-        info = ydl.extract_info(url, download=False)
+    opts.update(_network_options(url, proxy))
+    info = _extract_with_retries(url, opts, download=False)
     if not info:
         raise yt_dlp.utils.DownloadError("无法获取视频信息")
 
@@ -252,7 +297,7 @@ def extract_audio(
     if not is_supported_url(url):
         raise ValueError("不支持或无效的链接（支持 B 站及 yt-dlp 覆盖的其它站点）")
 
-    url = resolve_url(url)
+    url = resolve_url(url, proxy=proxy)
     os.makedirs(output_dir, exist_ok=True)
     out_tmpl = os.path.join(output_dir, "%(title).80s [%(id)s].%(ext)s")
 
@@ -315,42 +360,37 @@ def extract_audio(
     ffmpeg_path = resolve_ffmpeg_path()
     if ffmpeg_path:
         opts["ffmpeg_location"] = ffmpeg_path
-    if proxy is None:
-        proxy = detect_proxy()
-    if proxy:
-        opts["proxy"] = proxy
+    opts.update(_network_options(url, proxy))
+    info = _extract_with_retries(url, opts, download=True)
+    if not info:
+        raise yt_dlp.utils.DownloadError("无法获取视频信息")
 
-    with yt_dlp.YoutubeDL(opts) as ydl:
-        info = ydl.extract_info(url, download=True)
-        if not info:
-            raise yt_dlp.utils.DownloadError("无法获取视频信息")
+    paths = []
 
-        paths = []
+    def _collect(entry):
+        for rd in (entry.get("requested_downloads") or []):
+            fp = rd.get("filepath")
+            if fp and os.path.isfile(fp) and fp not in paths:
+                paths.append(fp)
 
-        def _collect(entry):
-            for rd in (entry.get("requested_downloads") or []):
-                fp = rd.get("filepath")
-                if fp and os.path.isfile(fp) and fp not in paths:
-                    paths.append(fp)
+    entries = info.get("entries") or []
+    if entries:
+        for entry in entries:
+            if entry:
+                _collect(entry)
+    else:
+        _collect(info)
 
-        entries = info.get("entries") or []
-        if entries:
-            for entry in entries:
-                if entry:
-                    _collect(entry)
-        else:
-            _collect(info)
-
-        if not paths:
-            # 兜底：按视频 id 扫输出目录
-            video_id = info.get("id", "")
-            suffix = ".mp4" if media_type == "video" else f".{audio_format}"
-            for f in sorted(os.listdir(output_dir)):
-                if video_id and video_id in f and f.lower().endswith(suffix):
-                    paths.append(os.path.join(output_dir, f))
-        if not paths:
-            raise yt_dlp.utils.DownloadError("未找到输出文件")
-        return [os.path.abspath(p) for p in paths]
+    if not paths:
+        # 兜底：按视频 id 扫输出目录
+        video_id = info.get("id", "")
+        suffix = ".mp4" if media_type == "video" else f".{audio_format}"
+        for f in sorted(os.listdir(output_dir)):
+            if video_id and video_id in f and f.lower().endswith(suffix):
+                paths.append(os.path.join(output_dir, f))
+    if not paths:
+        raise yt_dlp.utils.DownloadError("未找到输出文件")
+    return [os.path.abspath(p) for p in paths]
 
 
 def main():

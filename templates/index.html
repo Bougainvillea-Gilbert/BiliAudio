@@ -359,7 +359,7 @@
   fetch("/api/check-env").then(function (r) { return r.json(); }).then(function (d) {
     ffmpegWarn.style.display = d && d.ffmpeg ? "none" : "block";
     if (d && d.proxy_detected && d.proxy) {
-      proxyStatus.textContent = "已自动启用系统代理：" + d.proxy + "（海外站走代理，国内站不受影响）";
+      proxyStatus.textContent = "已自动启用系统代理：" + d.proxy + "（B 站默认直连；设置 BILI_AUDIO_PROXY 时按指定代理连接）";
     }
   }).catch(function () {});
 
